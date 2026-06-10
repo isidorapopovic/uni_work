@@ -1,0 +1,656 @@
+# Generated from: WPO_3_Popovic_Raes.ipynb
+# Converted at: 2026-03-10T12:35:13.528Z
+# Next step (optional): refactor into modules & generate tests with RunCell
+# Quick start: pip install runcell
+
+# # Health Information Systems and Decision Support Systems
+# ## WPO 4: Logistic Regression for COVID Severity
+# 
+# Dataset: `COVID_data.csv`
+# 
+
+
+# Isidora Popovic 0630336 Max Raes 0564563
+
+
+# ## Goal
+# The goal of this practical session is to get an insight into logistic regression modelling using real life medical data from patients infected with COVID-19. Your tasks will involve building different models to predict disease severity and analyze the relations between different variables and severity risk. Students must send their notebook using the Assignment functionality in Canvas before the __12th of March, 2026, 23:59. Remember to include the HTML format!__
+# 
+# This notebook combines lecture-style explanations with practical coding tasks.
+# Along the way, you will see written reflection questions in **bold** (for example, **Question 2.a**).
+# Please answer each of these questions in the dedicated empty code cell directly below the question.
+# 
+
+
+# ## Data Introduction: Clinical and Imaging Features
+# Have a look at the provided COVID datasheet (*COVID_data.csv*) with multiple features describing various COVID patients and suspects. The dataset consist of 2000 data points with multiple features, each datapoint representing an actual COVID-patient or a COVID-suspect.
+# 
+# The contents of the feaures provide the following information:
+# *   *PatientID*: ID of the patient
+# *   *Age*: Age of the patient categorized into one of 6 categories to limit the risk of deanonimization.
+# *   *Sex*: M or F - patient gender
+# *   *Covid*: Indicates whether the patient had a confirmed COVID infection
+# *   *Severity*: For COVID patients, indicates whether the disease was severe (need for intubation or caused patient death)
+# *   *Image_size* and *Spacing* are CT image parameters used for imaging
+# *   *GGO*: Proportion of the lung with GGO. Ground glass opacity (*GGO*) refers to the hazy gray areas that can show up in CT scans or X-rays of the lungs. These gray areas indicate increased density inside the lungs. The term comes from a technique in glassmaking during which the surface of the glass is blasted by sand.
+# *   *Consolidation*: Proportion of the lung with consolidated lessions. A pulmonary consolidation is a region of normally compressible lung tissue that has filled with liquid instead of air.
+# 
+# Clinical context:
+# - **Ground-glass opacity (GGO)** appears as hazy increased lung attenuation.
+# - **Consolidation** indicates lung regions filled with material/fluid instead of air.
+# 
+# Both features are extracted from CT images and expressed relative to lung volume.
+# 
+# <img src="GGO.jpeg" alt="CT image with GGO" style="width: 650px;"/>
+# 
+# High-resolution CT image showing bilateral peripheral ground-glass opacities (red arrows) in a COVID-19 patient.
+# 
+
+
+# ### Importing packages
+# 
+# During this lab session you will need a couple of packages, run the following cell to import pandas, numpy, seaborn and matplotlib.
+
+
+import numpy as np
+import pandas as pd
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import train_test_split
+
+sns.set_theme(style="whitegrid")
+plt.rcParams["figure.figsize"] = (8, 5)
+
+# ## Chapter 1: Data Preparation and Sanity Checks
+# Before modeling, we create a clean analysis dataframe `df`.
+# Correct preprocessing is essential: model outputs are only as trustworthy as the input table.
+# 
+
+
+# ### Practice 1.1
+# Build `df` from `COVID_data.csv` by:
+# 1. dropping patient identifier, image-size and spacing metadata columns,
+# 2. encoding `Sex` as numeric (e.g., F=0, M=1),
+# 3. keeping only COVID-positive rows,
+# 4. dropping `Covid`.
+# 
+
+
+df = pd.read_csv("COVID_data.csv")
+
+cols_to_drop = ["PatientID", "Image_size_x", "Image_size_y", "Image_size_z",
+                "Spacing_x", "Spacing_y", "Spacing_z"]
+df = df.drop(columns=cols_to_drop)
+
+df["Sex"] = df["Sex"].map({"F": 0, "M": 1})
+
+df = df[df["Covid"] == 1]
+
+df = df.drop(columns=["Covid"])
+
+# ### Practice 1.2
+# Create a sanity report containing:
+# - dataframe shape,
+# - column names,
+# - dtypes,
+# - first five rows (`df.head()`),
+# - value counts of `Severity` and `Sex`.
+# 
+# Why these checks matter:
+# - shape/columns verify feature selection,
+# - dtypes verify encoding,
+# - first rows expose obvious cleaning bugs,
+# - class counts reveal imbalance before modeling.
+# 
+# Your final dataframe should be a shape of `(1205, 5)`.
+# 
+
+
+print("=== Shape ===")
+print(df.shape)
+
+print("\n=== Column Names ===")
+print(df.columns.tolist())
+
+print("\n=== Data Types ===")
+print(df.dtypes)
+
+print("\n=== First Five Rows ===")
+print(df.head())
+
+print("\n=== Severity Value Counts ===")
+print(df["Severity"].value_counts())
+
+print("\n=== Sex Value Counts ===")
+print(df["Sex"].value_counts())
+
+# ## Chapter 2: Exploratory Analysis Before ML
+# Data visualization helps form hypotheses, spot potential outliers, and set expectations.
+# At this stage, we describe associations; we do not claim causality.
+# 
+# Refresher:
+# - Histograms and count plots show discrete/group frequencies.
+# - KDE plots show smoothed distribution shapes and shifts between groups.
+# 
+
+
+# ### Practice 2.1
+# Create at least these three analyses:
+# 1. one age-related visualization vs severity,
+# 2. one sex-related visualization vs severity,
+# 3. one lesion-feature visualization (`GGO` or `Consolidation`) vs severity.
+# 
+# Choose plot types you find most informative.
+# 
+
+
+fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+
+sns.countplot(data=df, x="Age", hue="Severity", palette="Set2", ax=axes[0])
+axes[0].set_title("Age Distribution by Severity")
+axes[0].set_xlabel("Age")
+axes[0].set_ylabel("Count")
+axes[0].legend(title="Severity", labels=["Non-severe (0)", "Severe (1)"])
+
+sns.countplot(data=df, x="Sex", hue="Severity", palette="Set1", ax=axes[1])
+axes[1].set_title("Sex Distribution by Severity")
+axes[1].set_xlabel("Sex (0=F, 1=M)")
+axes[1].set_ylabel("Count")
+axes[1].legend(title="Severity", labels=["Non-severe (0)", "Severe (1)"])
+
+sns.kdeplot(data=df, x="GGO", hue="Severity", fill=True, alpha=0.4, common_norm=False, palette="coolwarm", ax=axes[2])
+axes[2].set_title("GGO Distribution by Severity")
+axes[2].set_xlabel("GGO (proportion of lung)")
+axes[2].set_ylabel("Density")
+axes[2].legend_.set_title("Severity")
+plt.tight_layout()
+plt.show()
+
+# **Question 2.a** Write three evidence-based conclusions from your plots.
+# Use careful language (e.g., "suggests", "is associated with").
+# 
+# Example style (illustrative): "GGO seems higher for severe cases in this dataset."
+# 
+
+
+# 1. Age appears positively associated with severity. An older age shows a higher proportion of severe cases. This suggests that advanced age is a risk factor for severe COVID disease in this dataset.
+
+# 2. Sex also appears to be associated with severity. Male patients appear to represent a larger share of severe cases relative to females, suggesting a possible sex related difference in disease progression.
+
+# 3. GGO distribution appears shifted towards higher values for severe cases. This suggests that greater ground glass opacity in the lungs is associated with an increased likelihood of severe COVID disease.
+
+# ## Chapter 3: Logistic Regression with Age and Sex
+# Logistic regression allows us to analyze how a set of features affects some binary target label. The weights gives us an estimation of the influence of each particular feature on the probability of the target being equal to one.
+# 
+# We want to model how the probability that a person develops a severe COVID disease is affected by his/her age, sex, and size lung lesions.
+# 
+# For a binary target, logistic regression estimates:
+# 
+# $$
+# P(y_i=1\mid x_i)=\sigma(\alpha+\beta^\top x_i)
+# $$
+# 
+# with sigmoid:
+# 
+# $$
+# \sigma(t)=\frac{1}{1+e^{-t}}.
+# $$
+# 
+# For two features (`Age`, `Sex`):
+# 
+# $$
+# \log\frac{P(y=1\mid x)}{1-P(y=1\mid x)} = \alpha + \beta_{\text{Age}}\,\text{Age} + \beta_{\text{Sex}}\,\text{Sex}.
+# $$
+# 
+
+
+# ### Required interfaces
+# Implement in this order:
+# 1. `def logistic(x):`
+# 2. `def fit_logreg(X, y):`
+# 
+
+
+def logistic(x):
+  return 1 / (1 + np.exp(-x))
+
+
+def fit_logreg(X, y):
+    model = LogisticRegression(solver="lbfgs", max_iter=1000, random_state=0)
+    model.fit(X, y)
+    return model
+
+
+
+# ### Practice 3.1
+# - Verify `logistic(1)` (approximately 0.731).
+# - Fit logistic regression on `Age` and `Sex`.
+# - Report intercept, coefficients, and odds ratios.
+# 
+
+
+print(f"logistic(1) = {logistic(1):.3f}")
+
+X_2 = df[["Age", "Sex"]].values
+y = df["Severity"].values
+
+model_2 = fit_logreg(X_2, y)
+
+intercept = model_2.intercept_[0]
+coef_age, coef_sex = model_2.coef_[0]
+
+print(f"\nIntercept:        {intercept:.4f}")
+print(f"Coefficient Age:  {coef_age:.4f}")
+print(f"Coefficient Sex:  {coef_sex:.4f}")
+
+print(f"\nOdds Ratio Age:   {np.exp(coef_age):.4f}")
+print(f"Odds Ratio Sex:   {np.exp(coef_sex):.4f}")
+
+# ### Practice 3.2
+# Now manually compute the probability of severity with the obtained coefficients. Use your own defined logistic function and the formula presented. Compare the probability of severe disease  of the following patients:
+# - 60-year-old male,
+# - 50-year-old female,
+# - 35-year-old male,
+# - 40-year-old female.
+# 
+# __Hint__: Represent all features in one numpy array with shape 4 ( patients) by 2 (features). Can you re write the Formula given in task 2 as a Matrix multiplication? A matrix multiplicatoin can be performed by the '@' operation on numpy arrays, Transprosing matrixes with '.T' can also be usefull!
+# 
+# 
+
+
+patients = np.array([
+    [60, 1],  # 60-year-old male
+    [50, 0],  # 50-year-old female
+    [35, 1],  # 35-year-old male
+    [40, 0],  # 40-year-old female
+])
+
+log_odds = intercept + patients @ np.array([coef_age, coef_sex])
+
+probabilities = logistic(log_odds)
+
+labels = ["60M", "50F", "35M", "40F"]
+for label, prob in zip(labels, probabilities):
+    print(f"Patient {label}: P(severe) = {prob:.4f}")
+
+# ### Practice 3.3
+# Plot model-predicted severity curves vs age (20 to 100) for both sexes.
+# Overlay observed severity proportions by age/sex.
+# 
+
+
+age_grid = np.linspace(20, 100, 200)
+
+log_odds_male   = intercept + coef_age * age_grid + coef_sex * 1
+log_odds_female = intercept + coef_age * age_grid + coef_sex * 0
+
+p_male   = logistic(log_odds_male)
+p_female = logistic(log_odds_female)
+
+observed = df.groupby(["Age", "Sex"])["Severity"].mean().reset_index()
+obs_male   = observed[observed["Sex"] == 1]
+obs_female = observed[observed["Sex"] == 0]
+
+plt.figure(figsize=(9, 5))
+
+plt.plot(age_grid, p_male,   color="steelblue",  label="Model - Male")
+plt.plot(age_grid, p_female, color="tomato",      label="Model - Female")
+
+plt.scatter(obs_male["Age"],   obs_male["Severity"],   color="steelblue",
+            marker="o", s=60, zorder=5, label="Observed - Male")
+plt.scatter(obs_female["Age"], obs_female["Severity"], color="tomato",
+            marker="o", s=60, zorder=5, label="Observed - Female")
+
+plt.xlabel("Age")
+plt.ylabel("P(Severe)")
+plt.title("Predicted Severity Risk vs Age by Sex\nwith Observed Proportions")
+plt.legend()
+plt.tight_layout()
+plt.show()
+
+# **Question 3.a** Interpret the age and sex effects from this model. What does this model capture well, and what information might still be missing?
+# 
+
+
+# The model captures two clear effects:
+# - Age is positively associated with severity, the predicted probability of severe disease rises with age for both sexes. The observed proportions follow this trend suggesting age is a meaningful predictor.
+# - Sex appears associated with severity. Males show a higher predicted probability than females across all age groups, the observed data points support this.
+
+# The model is likely missing important information:
+# - It does not include any clinical or imaging features such as GGO or consolidation, which may explain a large part of the remaining variance in severity.
+# - Age is treated as a continuous linear predictor, however the true relationship may be non-linear (risk accelerating more beyond a certain age).
+# - The model does not account for comorbidities, vaccination status,treatment, ... all of which are known to influence COVID severity in reality.
+
+# ## Chapter 4: Bootstrap Confidence Intervals for the 2-Feature Model
+# Bootstrapping estimates uncertainty by repeated refitting on resampled datasets.
+# From the bootstrap parameter distribution, we compute percentile confidence intervals.
+# 
+
+
+# ### Required interfaces
+# Continue with:
+# 
+# `def bootstrap_logreg(X, y, n_boot=1000, random_state=0):`
+# 
+# `def ci_from_samples(samples, alpha=0.05):`
+# 
+# `def bootstrap_risk_curve(age_grid, sex_value, coef_samples, intercept_samples):`
+# 
+# 
+
+
+def bootstrap_logreg(X, y, n_boot=1000, random_state=0):
+    rng = np.random.default_rng(random_state)
+    intercept_samples = []
+    coef_samples = []
+
+    for _ in range(n_boot):
+        indices = rng.integers(0, len(X), size=len(X))
+        X_boot, y_boot = X[indices], y[indices]
+        model = fit_logreg(X_boot, y_boot)
+        intercept_samples.append(model.intercept_[0])
+        coef_samples.append(model.coef_[0])
+
+    return np.array(intercept_samples), np.array(coef_samples)
+
+def ci_from_samples(samples, alpha=0.05):
+    low  = np.percentile(samples, 100 * (alpha / 2))
+    high = np.percentile(samples, 100 * (1 - alpha / 2))
+    return low, high
+
+# ### Practice 4.1
+# For the 2-feature model, build a coefficient CI table containing:
+# - Intercept,
+# - Age coefficient,
+# - Sex coefficient,
+# with point estimate, CI low, and CI high.
+# 
+
+
+intercept_samples, coef_samples = bootstrap_logreg(X_2, y)
+
+rows = []
+for i, name in enumerate(["Intercept", "Age", "Sex"]):
+    if name == "Intercept":
+        point = intercept
+        low, high = ci_from_samples(intercept_samples)
+    else:
+        idx = 0 if name == "Age" else 1
+        point = model_2.coef_[0][idx]
+        low, high = ci_from_samples(coef_samples[:, idx])
+    rows.append({"Feature": name, "Estimate": point, "CI Low": low, "CI High": high})
+
+ci_table = pd.DataFrame(rows).set_index("Feature")
+print(ci_table.round(4))
+
+def bootstrap_risk_curve(age_grid, sex_value, coef_samples, intercept_samples):
+    curves = np.array([
+        logistic(intercept_samples[i] + coef_samples[i, 0] * age_grid + coef_samples[i, 1] * sex_value)
+        for i in range(len(intercept_samples))
+    ])
+    mean_curve = curves.mean(axis=0)
+    low_curve  = np.percentile(curves, 2.5,  axis=0)
+    high_curve = np.percentile(curves, 97.5, axis=0)
+    return mean_curve, low_curve, high_curve
+
+
+# ### Practice 4.2
+# Plot bootstrap mean risk curves in function of age with 95% CI bands for both sexes on one figure.
+# 
+
+
+age_grid = np.linspace(20, 100, 200)
+
+mean_male,   low_male,   high_male   = bootstrap_risk_curve(age_grid, 1, coef_samples, intercept_samples)
+mean_female, low_female, high_female = bootstrap_risk_curve(age_grid, 0, coef_samples, intercept_samples)
+
+plt.figure(figsize=(9, 5))
+
+plt.plot(age_grid, mean_male, color="steelblue", label="Male")
+plt.fill_between(age_grid, low_male, high_male, color="steelblue", alpha=0.2, label="Male 95% CI")
+
+plt.plot(age_grid, mean_female, color="tomato", label="Female")
+plt.fill_between(age_grid, low_female, high_female, color="tomato", alpha=0.2, label="Female 95% CI")
+
+plt.xlabel("Age")
+plt.ylabel("P(Severe)")
+plt.title("Bootstrap Mean Risk Curves with 95% CI by Sex")
+plt.legend()
+plt.tight_layout()
+plt.show()
+
+# **Question 4.a** Which effects appear robust from the confidence intervals? What does CI overlap/non-overlap suggest, and what does it not prove?
+# 
+
+
+# The age effect appears very robuust. Both curves rise consistently with age and their CI bands are relatively narrow across the full age range. This suggests that the positive association between age and severity is a reliable finding in this dataset.
+
+# The sex also appears robuust, the CI bands for males and females do overlap for the extremeties of the age ranges. The higher severity risk in males is unlikely to be a chance finding. The non-overlap at the center ages indicates that the sex difference is statistically meaningful as a result of the bootstrap framework.
+
+# However, non-overlapping CIs in the center do not prove causality. They only suggest that the observed difference is consistent across resampled points of this dataset. Also, the lack of data at the extremities could be a reason for the overlap.
+
+
+# ## Chapter 5: Extended Model with GGO and Consolidation
+# Now include all four predictors: `Age`, `Sex`, `GGO`, `Consolidation`.
+# Adding predictors can change coefficient values due to shared information between variables.
+# 
+
+
+# ### Practice 5.1
+# Fit the 4-feature logistic regression model.
+# Report coefficients and odds ratios.
+# 
+
+
+X_4 = df[["Age", "Sex", "GGO", "Consolidation"]].values
+
+model_4 = fit_logreg(X_4, y)
+
+intercept_4 = model_4.intercept_[0]
+coefs_4 = model_4.coef_[0]
+feature_names = ["Age", "Sex", "GGO", "Consolidation"]
+
+print(f"Intercept: {intercept_4:.4f}\n")
+print(f"{'Feature':<15} {'Coefficient':>12} {'Odds Ratio':>12}")
+print("-" * 40)
+for name, coef in zip(feature_names, coefs_4):
+    print(f"{name:<15} {coef:>12.4f} {np.exp(coef):>12.4f}")
+
+# ### Practice 5.2
+# Bootstrap the 4-feature model and compute confidence intervals for all coefficients.
+# Compare these intervals with the 2-feature model results.
+# 
+
+
+intercept_samples_4, coef_samples_4 = bootstrap_logreg(X_4, y)
+
+rows_4 = []
+for i, name in enumerate(["Intercept"] + feature_names):
+    if name == "Intercept":
+        point = intercept_4
+        low, high = ci_from_samples(intercept_samples_4)
+    else:
+        idx = feature_names.index(name)
+        point = coefs_4[idx]
+        low, high = ci_from_samples(coef_samples_4[:, idx])
+    rows_4.append({"Feature": name, "Estimate": point, "CI Low": low, "CI High": high})
+
+ci_table_4 = pd.DataFrame(rows_4).set_index("Feature")
+
+print("=== 2-Feature Model (Age, Sex) ===")
+print(ci_table.round(4))
+
+print("\n=== 4-Feature Model (Age, Sex, GGO, Consolidation) ===")
+print(ci_table_4.round(4))
+
+# ### Practice 5.3
+# Visualize model-predicted risk in function of age for low vs high values (10th vs 90th percentile) of:
+# - GGO, and
+# - Consolidation,
+# while fixing other features ( put either m or f, and use the mean of either GGO or consolidation when inspecting the other ).
+# 
+# Use bootstrap samples to add CI bands to these lesion-impact curves.
+# 
+
+
+age_grid = np.linspace(20, 100, 200)
+
+ggo_low,  ggo_high  = np.percentile(df["GGO"],          [10, 90])
+con_low,  con_high  = np.percentile(df["Consolidation"], [10, 90])
+
+sex_fixed  = 1
+ggo_mean   = df["GGO"].mean()
+con_mean   = df["Consolidation"].mean()
+
+def risk_curve_4feat(age_grid, sex, ggo, consolidation, coef_samples, intercept_samples):
+    """Compute mean and 95% CI risk curves for the 4-feature model."""
+    curves = np.array([
+        logistic(
+            intercept_samples[i]
+            + coef_samples[i, 0] * age_grid
+            + coef_samples[i, 1] * sex
+            + coef_samples[i, 2] * ggo
+            + coef_samples[i, 3] * consolidation
+        )
+        for i in range(len(intercept_samples))
+    ])
+    return curves.mean(axis=0), np.percentile(curves, 2.5, axis=0), np.percentile(curves, 97.5, axis=0)
+
+fig, axes = plt.subplots(1, 2, figsize=(16, 5))
+
+mean_ggo_lo, low_ggo_lo, high_ggo_lo = risk_curve_4feat(age_grid, sex_fixed, ggo_low,  con_mean, coef_samples_4, intercept_samples_4)
+mean_ggo_hi, low_ggo_hi, high_ggo_hi = risk_curve_4feat(age_grid, sex_fixed, ggo_high, con_mean, coef_samples_4, intercept_samples_4)
+
+axes[0].plot(age_grid, mean_ggo_lo, color="steelblue", label=f"GGO low (p10={ggo_low:.2f})")
+axes[0].fill_between(age_grid, low_ggo_lo, high_ggo_lo, color="steelblue", alpha=0.2)
+axes[0].plot(age_grid, mean_ggo_hi, color="tomato", label=f"GGO high (p90={ggo_high:.2f})")
+axes[0].fill_between(age_grid, low_ggo_hi, high_ggo_hi, color="tomato", alpha=0.2)
+axes[0].set_title("Predicted Severity Risk vs Age\nby GGO (Consolidation fixed at mean)")
+axes[0].set_xlabel("Age")
+axes[0].set_ylabel("P(Severe)")
+axes[0].legend()
+
+mean_con_lo, low_con_lo, high_con_lo = risk_curve_4feat(age_grid, sex_fixed, ggo_mean, con_low,  coef_samples_4, intercept_samples_4)
+mean_con_hi, low_con_hi, high_con_hi = risk_curve_4feat(age_grid, sex_fixed, ggo_mean, con_high, coef_samples_4, intercept_samples_4)
+
+axes[1].plot(age_grid, mean_con_lo, color="steelblue", label=f"Consolidation low (p10={con_low:.2f})")
+axes[1].fill_between(age_grid, low_con_lo, high_con_lo, color="steelblue", alpha=0.2)
+axes[1].plot(age_grid, mean_con_hi, color="tomato", label=f"Consolidation high (p90={con_high:.2f})")
+axes[1].fill_between(age_grid, low_con_hi, high_con_hi, color="tomato", alpha=0.2)
+axes[1].set_title("Predicted Severity Risk vs Age\nby Consolidation (GGO fixed at mean)")
+axes[1].set_xlabel("Age")
+axes[1].set_ylabel("P(Severe)")
+axes[1].legend()
+
+plt.tight_layout()
+plt.show()
+
+# **Question 5.a** Based on the GGO and Consolidation plots with confidence intervals, what can you conclude about their impact on severity? Which appears stronger, and how certain is that conclusion? Also take into account the dynamic range of both features
+# 
+
+
+# Both GGO and Consolidation show a positive association with severity. Higher values of either feature are associated with increased predicted probability of severe disease across all age groups.
+
+# GGO appears to have a stronger impact on severity. The gap between the low  and high GGO curves is large and the CI bands show no overlap across the age range, suggesting this is a real effect.
+
+# Consolidation also shows a positive effect. The CI bands of the low and high consolidation curves overlap substantially, meaning we cannot confidently distinguish the two curves in that region.
+
+# The dynamic range of GGO is wider than that of consolidation . This means that even if the coefficient for consolidation were similarly sized, its real-world impact on predicted severity is smalle because patients vary less in their consolidation values. The combination of a larger coefficient effect and a wider dynamic range makes GGO the more influential predictor of severity.
+
+# ## Chapter 6: Cost Functions and Decision Curve Analysis
+# Training and decision-making are not the same question.
+# 
+# Training (fit quality) uses log-loss:
+# 
+# $$
+# \mathcal{L} = -\frac{1}{n}\sum_{i=1}^{n}\left[y_i\log(p_i)+(1-y_i)\log(1-p_i)\right].
+# $$
+# 
+# Decision utility uses net benefit at threshold $t$:
+# 
+# $$
+# \text{NetBenefit}(t)=\frac{TP(t)}{N}-\frac{FP(t)}{N}\cdot\frac{t}{1-t}.
+# $$
+# 
+# Decision curve analysis compares net benefit across thresholds for different strategies.
+# 
+
+
+# ### Required interface
+# 6. `def net_benefit_curve(y_true, p_pred, thresholds):`
+# 
+
+
+def net_benefit_curve(y_true, p_pred, thresholds):
+    n = len(y_true)
+    net_benefits = []
+
+    for t in thresholds:
+        predicted_positive = p_pred >= t
+        tp = np.sum((predicted_positive == 1) & (y_true == 1))
+        fp = np.sum((predicted_positive == 1) & (y_true == 0))
+        nb = (tp / n) - (fp / n) * (t / (1 - t))
+        net_benefits.append(nb)
+
+    return np.array(net_benefits)
+
+# ### Practice 6.1
+# - Split data into train/test (e.g., 33% test).
+# - Fit 2-feature and 4-feature logistic models.
+# - Predict probabilities on test sets.
+# - Compute and plot net benefit curves across thresholds.
+# - Add `treat all` and `treat none` baselines.
+# 
+
+
+X_2_train, X_2_test, y_train, y_test = train_test_split(X_2, y, test_size=0.33, random_state=0)
+X_4_train, X_4_test, _, _            = train_test_split(X_4, y, test_size=0.33, random_state=0)
+
+model_2_tt = fit_logreg(X_2_train, y_train)
+model_4_tt = fit_logreg(X_4_train, y_train)
+
+p_pred_2 = model_2_tt.predict_proba(X_2_test)[:, 1]
+p_pred_4 = model_4_tt.predict_proba(X_4_test)[:, 1]
+
+thresholds = np.linspace(0.01, 0.99, 200)
+
+nb_2 = net_benefit_curve(y_test, p_pred_2, thresholds)
+nb_4 = net_benefit_curve(y_test, p_pred_4, thresholds)
+
+nb_treat_all = np.array([
+    np.mean(y_test) - (1 - np.mean(y_test)) * (t / (1 - t))
+    for t in thresholds
+])
+
+nb_treat_none = np.zeros_like(thresholds)
+
+plt.figure(figsize=(10, 6))
+plt.plot(thresholds, nb_2,         color="steelblue", label="2-Feature Model (Age, Sex)")
+plt.plot(thresholds, nb_4,         color="tomato",    label="4-Feature Model (Age, Sex, GGO, Consolidation)")
+plt.plot(thresholds, nb_treat_all, color="gray",      linestyle="--", label="Treat All")
+plt.plot(thresholds, nb_treat_none,color="black",     linestyle="--", label="Treat None")
+
+plt.ylim(-0.05, 0.3)
+plt.xlim(0, 1)
+plt.xlabel("Threshold Probability")
+plt.ylabel("Net Benefit")
+plt.title("Decision Curve Analysis: 2-Feature vs 4-Feature Model")
+plt.legend()
+plt.tight_layout()
+plt.show()
+
+# **Question 6.a** Which model would you recommend for decision support, and for which threshold range? Justify using the decision curves and interpretability considerations.
+# 
+
+
+# The 4-feature model would be recommended for decision support. From looking at the the decision curve, it outperforms the 2-feature model across the majority of clinically relevant thresholds, particularly in the range of approximately 0.15 to 0.50, where its net benefit curve sits above both the 2-feature model and the treat-all baseline.
+
+# Below a threshold of 0.15, the treat-all strategy dominates both models, meaning that at very low risk thresholds it is better to simply treat everyone than to rely on either models predictions.
+
+# Above a threshold of 0.50, both models converge near zero net benefit, suggesting that neither model adds meaningful value at very high risk thresholds.
+
+# The 2-feature model drops below treat none around a threshold of 0.35. Meaning it would actively harm decision making beyond that point. The 4-feature model maintains a small positive net benefit up to approximately 0.50, making it the safer and more useful choice acrossa wider threshold range.
+
+# From an interpretability standpoint, the 4-feature model remains clinically interpretable beacuse its predictors all have clear clinical meaning while offering meaningfully better decision support than demographics alone.
